@@ -5,18 +5,20 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../src/theme/colors';
 import { useAuth } from '../src/storage/AuthContext';
 
 export default function SignupScreen() {
   const router = useRouter();
-  const { signup } = useAuth();
+  const { signup, signInWithGoogle, googleAuthRequest } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
   const [focusedField, setFocusedField] = useState<string | null>(null);
   const emailRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
@@ -44,6 +46,17 @@ export default function SignupScreen() {
     }
   };
 
+  const handleGoogleSignIn = async () => {
+    if (googleLoading) return;
+    setError('');
+    setGoogleLoading(true);
+    const result = await signInWithGoogle();
+    setGoogleLoading(false);
+    if (!result.success && result.error && result.error !== 'Sign in cancelled') {
+      setError(result.error);
+    }
+  };
+
   return (
     <SafeAreaView style={st.container}>
       <KeyboardAvoidingView style={st.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -58,10 +71,34 @@ export default function SignupScreen() {
                 <Text style={st.logoText}>QUORIDOR</Text>
               </View>
 
-              <Text style={st.heading}>CREATE{`\n`}ACCOUNT</Text>
+              <Text style={st.heading}>CREATE{'\n'}ACCOUNT</Text>
               <Text style={st.subheading}>Begin your strategic journey</Text>
 
               {error ? <Text style={st.errorText}>{error}</Text> : null}
+
+              {/* Google Sign-In Button */}
+              <TouchableOpacity
+                style={st.googleBtn}
+                onPress={handleGoogleSignIn}
+                disabled={!googleAuthRequest || googleLoading}
+                activeOpacity={0.85}
+              >
+                {googleLoading ? (
+                  <ActivityIndicator color={COLORS.textPrimary} size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="logo-google" size={18} color={COLORS.textPrimary} />
+                    <Text style={st.googleBtnText}>CONTINUE WITH GOOGLE</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              {/* Divider */}
+              <View style={st.dividerRow}>
+                <View style={st.dividerLine} />
+                <Text style={st.dividerText}>OR</Text>
+                <View style={st.dividerLine} />
+              </View>
 
               <View style={st.inputGroup}>
                 <View style={[st.inputWrap, focusedField === 'name' && st.inputFocused]}>
@@ -115,7 +152,12 @@ const st = StyleSheet.create({
   logoText: { color: COLORS.textPrimary, fontSize: 16, fontFamily: 'Inter_800ExtraBold', fontWeight: '800', letterSpacing: 3 },
   heading: { color: COLORS.textPrimary, fontSize: 36, fontFamily: 'Inter_800ExtraBold', fontWeight: '800', lineHeight: 42 },
   subheading: { color: COLORS.textSecondary, fontSize: 14, fontFamily: 'Inter_400Regular', marginTop: 8, marginBottom: 24 },
-  errorText: { color: COLORS.error, fontSize: 13, fontFamily: 'Inter_600SemiBold', fontWeight: '600', marginBottom: 16 },
+  errorText: { color: COLORS.error, fontSize: 13, fontFamily: 'Inter_600SemiBold', fontWeight: '600', marginBottom: 12 },
+  googleBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, backgroundColor: COLORS.elevated, borderRadius: 14, paddingVertical: 16, marginBottom: 4 },
+  googleBtnText: { color: COLORS.textPrimary, fontSize: 14, fontFamily: 'Inter_700Bold', fontWeight: '700', letterSpacing: 0.5 },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 16, gap: 12 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.06)' },
+  dividerText: { color: COLORS.textSecondary, fontSize: 11, fontFamily: 'Inter_700Bold', fontWeight: '700', letterSpacing: 1.5 },
   inputGroup: { gap: 12 },
   inputWrap: { backgroundColor: COLORS.elevated, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 14, overflow: 'hidden', position: 'relative' },
   inputFocused: { backgroundColor: COLORS.surfaceElevated },
