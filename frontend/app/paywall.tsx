@@ -1,9 +1,10 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../src/theme/colors';
+import { useAuthStore } from '../src/store/authStore';
 import { useGameContext } from '../src/storage/GameContext';
 
 const FEATURES = [
@@ -14,18 +15,39 @@ const FEATURES = [
 
 export default function PaywallScreen() {
   const router = useRouter();
+  const { activatePremium, isPremium } = useAuthStore();
   const { setPremium } = useGameContext();
   const pressedRef = useRef(false);
+  const [success, setSuccess] = useState(false);
 
-  const handlePurchase = () => {
+  const handlePurchase = async (tier: 'monthly' | 'annual') => {
     if (pressedRef.current) return;
     pressedRef.current = true;
+    const ok = await activatePremium(tier);
     setPremium(true);
+    setSuccess(true);
     setTimeout(() => {
       pressedRef.current = false;
       router.back();
-    }, 300);
+    }, 800);
   };
+
+  if (success || isPremium) {
+    return (
+      <SafeAreaView style={st.container}>
+        <View style={st.successArea}>
+          <View style={st.successIcon}>
+            <Ionicons name="checkmark-circle" size={56} color={COLORS.success} />
+          </View>
+          <Text style={st.successTitle}>WELCOME TO{`\n`}GRANDMASTER</Text>
+          <Text style={st.successSub}>All premium features are now unlocked.</Text>
+          <TouchableOpacity style={st.successBtn} onPress={() => router.back()} activeOpacity={0.85}>
+            <Text style={st.successBtnText}>CONTINUE</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={st.container}>
@@ -41,9 +63,7 @@ export default function PaywallScreen() {
         </View>
 
         <Text style={st.title}>GRANDMASTER{`\n`}PASS</Text>
-        <Text style={st.subtitle}>
-          Unlock the full strategic arsenal. Advanced AI, exclusive board skins, deep game analysis, and an ad-free command center.
-        </Text>
+        <Text style={st.subtitle}>Unlock the full strategic arsenal. Advanced AI, exclusive board skins, deep game analysis, and an ad-free command center.</Text>
 
         <View style={st.features}>
           {FEATURES.map((f, i) => (
@@ -67,7 +87,7 @@ export default function PaywallScreen() {
             <Text style={st.pricePer}>/year</Text>
           </View>
           <Text style={st.planDesc}>Billed annually. That's just $4.17/mo.</Text>
-          <TouchableOpacity style={st.unlockBtn} onPress={handlePurchase} activeOpacity={0.85}>
+          <TouchableOpacity style={st.unlockBtn} onPress={() => handlePurchase('annual')} activeOpacity={0.85}>
             <Text style={st.unlockBtnText}>UNLOCK NOW</Text>
           </TouchableOpacity>
         </View>
@@ -79,14 +99,12 @@ export default function PaywallScreen() {
             <Text style={st.pricePer}>/month</Text>
           </View>
           <Text style={st.planDesc}>Cancel anytime. No commitments.</Text>
-          <TouchableOpacity style={st.monthlyBtn} onPress={handlePurchase} activeOpacity={0.85}>
+          <TouchableOpacity style={st.monthlyBtn} onPress={() => handlePurchase('monthly')} activeOpacity={0.85}>
             <Text style={st.monthlyBtnText}>START MONTHLY</Text>
           </TouchableOpacity>
         </View>
 
-        <Text style={st.legalText}>
-          Payment will be charged to your account at confirmation. Subscription automatically renews unless cancelled at least 24 hours before the end of the current period.
-        </Text>
+        <Text style={st.legalText}>Payment will be charged to your account at confirmation. Subscription automatically renews unless cancelled at least 24 hours before the end of the current period.</Text>
         <View style={st.legalLinks}>
           <TouchableOpacity><Text style={st.legalLink}>TERMS OF SERVICE</Text></TouchableOpacity>
           <Text style={st.legalSep}>|</Text>
@@ -130,4 +148,10 @@ const st = StyleSheet.create({
   legalLinks: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginTop: 12 },
   legalLink: { color: COLORS.textSecondary, fontSize: 10, fontFamily: 'Inter_700Bold', fontWeight: '700', letterSpacing: 1 },
   legalSep: { color: COLORS.textSecondary, fontSize: 10 },
+  successArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 },
+  successIcon: { width: 100, height: 100, borderRadius: 50, backgroundColor: 'rgba(34,197,94,0.1)', alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
+  successTitle: { color: COLORS.textPrimary, fontSize: 28, fontFamily: 'Inter_800ExtraBold', fontWeight: '800', textAlign: 'center', lineHeight: 34 },
+  successSub: { color: COLORS.textSecondary, fontSize: 14, fontFamily: 'Inter_400Regular', marginTop: 8 },
+  successBtn: { backgroundColor: COLORS.accent, borderRadius: 14, paddingVertical: 18, alignItems: 'center', marginTop: 32, width: '100%' },
+  successBtnText: { color: COLORS.background, fontSize: 15, fontFamily: 'Inter_800ExtraBold', fontWeight: '800', letterSpacing: 1 },
 });

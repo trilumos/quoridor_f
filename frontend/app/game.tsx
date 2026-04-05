@@ -10,8 +10,12 @@ import { createInitialGameState, getValidMoves, isValidWallPlacement, applyMove,
 import { getAIMove } from '../src/game/AIPlayer';
 import GameBoard from '../src/components/GameBoard';
 import TurnToast from '../src/components/TurnToast';
+import AchievementToast from '../src/components/AchievementToast';
 import WallIcon from '../src/components/WallIcon';
 import { useGameContext } from '../src/storage/GameContext';
+import { useAuthStore } from '../src/store/authStore';
+import { useStatsStore } from '../src/store/statsStore';
+import { useGameStore } from '../src/store/gameStore';
 
 type LogEntry = { num: number; type: string; detail: string };
 
@@ -22,12 +26,15 @@ function posToNotation(row: number, col: number): string {
 export default function GameScreen() {
   const params = useLocalSearchParams();
   const router = useRouter();
-  const { settings, recordWin, recordLoss, recordWallsPlaced, incrementAdCounter, shouldShowAd, saveGame, clearSavedGame } = useGameContext();
+  const { settings, recordWin, recordLoss, recordWallsPlaced, incrementAdCounter, shouldShowAd, saveGame: ctxSaveGame, clearSavedGame } = useGameContext();
+  const { user, isPremium, profile } = useAuthStore();
+  const { stats, recordGame } = useStatsStore();
+  const { saveGame: storeSaveGame, deleteSavedGame, incrementMatchCount, shouldShowAd: storeShowAd } = useGameStore();
   const { width: sw, height: sh } = useWindowDimensions();
 
   const mode = (params.mode as GameMode) || 'ai';
   const difficulty = (params.difficulty as AIDifficulty) || 'easy';
-  const p1Name = (params.p1Name as string) || 'ARCHITECT_X';
+  const p1Name = (params.p1Name as string) || profile?.username || 'ARCHITECT_X';
   const p2Name = mode === 'ai' ? (params.p2Name as string) || 'KAI_ZEN_01' : (params.p2Name as string) || 'Player 2';
 
   const boardSize = Math.min(sw - 40, sh * 0.38);
@@ -47,6 +54,7 @@ export default function GameScreen() {
   const [turnToastPlayer, setTurnToastPlayer] = useState('');
   const [moveLog, setMoveLog] = useState<LogEntry[]>([]);
   const [chatMsg, setChatMsg] = useState('');
+  const [achievementQueue, setAchievementQueue] = useState<string[]>([]);
   const gameOverHandled = useRef(false);
   const moveCountRef = useRef(0);
   const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -61,6 +69,13 @@ export default function GameScreen() {
     moveCountRef.current += 1;
     setMoveLog(prev => [{ num: moveCountRef.current, type, detail }, ...prev].slice(0, 20));
   }, []);
+
+  // Auto-save game state on every change
+  useEffect(() => {
+    if (user && !gameState.gameOver) {
+      storeSaveGame(user.id, gameState as any, mode, difficulty || null);
+    }
+  }, [gameState, user]);
 
   useEffect(() => {
     if (actionMode === 'move' && !gameState.gameOver) {
@@ -105,6 +120,40 @@ export default function GameScreen() {
       }
       recordWallsPlaced(gameState.wallsPlaced[0] + gameState.wallsPlaced[1]);
       incrementAdCounter();
+      incrementMatchCount();
+
+      // Record to Supabase
+      const handleGameEnd = async () => {
+        if (user && stats) {
+          try {
+            const durationSec = Math.floor((Date.now() - gameState.startTime) / 1000);
+            const wallsUsed = gameState.wallsPlaced[0];
+            const ratingBefore = stats.rating || 1200;
+            const ratingChange = isPlayerWin ? Math.floor(Math.random() * 15) + 5 : -(Math.floor(Math.random() * 10) + 3);
+            const ratingAfter = ratingBefore + ratingChange;
+
+            const gameData = {
+              difficulty: difficulty.toUpperCase(),
+              result: (gameState.winner === 0 ? 'WIN' : 'LOSS') as 'WIN' | 'LOSS',
+              duration_seconds: durationSec,
+              moves_made: gameState.moveCount[0],
+              walls_placed: wallsUsed,
+              wall_efficiency: Math.round((wallsUsed / 10) * 100),
+              rating_before: ratingBefore,
+              rating_after: ratingAfter,
+              rating_change: ratingChange,
+            };
+
+            const newAchievements = await recordGame(user.id, gameData);
+            if (newAchievements.length > 0) {
+              setAchievementQueue(newAchievements);
+            }
+            await deleteSavedGame(user.id);
+          } catch {}
+        }
+      };
+      handleGameEnd();
+
       const endParams = {
         winner: String(gameState.winner),
         p1Name: gameState.players[0].name,
@@ -118,7 +167,7 @@ export default function GameScreen() {
         difficulty: difficulty || '',
       };
       setTimeout(() => {
-        if (shouldShowAd()) {
+        if (shouldShowAd() || storeShowAd(isPremium)) {
           router.replace({
             pathname: '/ad-interstitial',
             params: { returnTo: mode === 'ai' && gameState.winner !== 0 ? '/defeat' : '/victory', ...endParams },
@@ -127,7 +176,7 @@ export default function GameScreen() {
           const destination = mode === 'ai' && gameState.winner !== 0 ? '/defeat' : '/victory';
           router.replace({ pathname: destination, params: endParams } as never);
         }
-      }, 700);
+      }, 1500);
     }
   }, [gameState.gameOver]);
 
@@ -205,9 +254,58 @@ export default function GameScreen() {
           </TouchableOpacity>
         </View>
 
+        {/* Opponent Info (TOP) */}
+        <View style={st.infoCard}>
+          <View style={st.infoRow}>
+            <View style={st.avatarOpp}>
+              <Ionicons name="person" size={24} color={COLORS.textSecondary} />
+            </View>
+            <View style={st.infoMid}>
+              <Text style={st.infoLabel}>OPPONENT {cp === 1 ? '(ACTIVE)' : ''}</Text>
+              <Text style={st.infoName}>{gameState.players[1].name}</Text>
+              <View style={st.infoMeta}>
+                <Text style={st.infoMetaLabel}>RANK</Text>
+                <Text style={st.infoMetaValue}>#1,204</Text>
+              </View>
+            </View>
+            <View style={st.wallsCol}>
+              <Text style={st.wallsLabel}>WALLS</Text>
+              <WallIcon remaining={gameState.players[1].wallsRemaining} />
+            </View>
+          </View>
+        </View>
+
         {/* Board */}
         <View style={st.boardWrap}>
           <GameBoard gameState={gameState} actionMode={isHuman ? actionMode : 'move'} validMoves={isHuman ? validMoves : []} wallPreview={wallPreview} onCellPress={handleCellPress} onIntersectionPress={handleIntersectionPress} boardSize={boardSize} />
+        </View>
+
+        {/* Player Info (BOTTOM) */}
+        <View style={[st.infoCard, st.playerCard]}>
+          <View style={st.playerPinstripe} />
+          <View style={st.infoRow}>
+            <View style={st.avatarPlayer}>
+              <Ionicons name="person" size={24} color={COLORS.textPrimary} />
+            </View>
+            <View style={st.infoMid}>
+              <Text style={[st.infoLabel, { color: COLORS.accent }]}>YOU {cp === 0 ? '(ACTIVE)' : ''}</Text>
+              <Text style={st.infoName}>{gameState.players[0].name}</Text>
+              <View style={st.infoMetaRow}>
+                <View>
+                  <Text style={st.infoMetaLabel}>RATING</Text>
+                  <Text style={st.infoMetaValue}>{stats?.rating || 1200}</Text>
+                </View>
+                <View>
+                  <Text style={st.infoMetaLabel}>STREAK</Text>
+                  <Text style={st.infoMetaValue}>{stats?.current_streak || 0}</Text>
+                </View>
+              </View>
+            </View>
+            <View style={st.wallsCol}>
+              <Text style={st.wallsLabel}>WALLS</Text>
+              <WallIcon remaining={gameState.players[0].wallsRemaining} />
+            </View>
+          </View>
         </View>
 
         {/* MOVE / WALL Toggle */}
@@ -227,27 +325,6 @@ export default function GameScreen() {
           <Text style={st.confirmText}>CONFIRM ACTION</Text>
         </TouchableOpacity>
 
-        {/* Opponent Info */}
-        <View style={st.infoCard}>
-          <View style={st.infoRow}>
-            <View style={st.avatarOpp}>
-              <Ionicons name="person" size={24} color={COLORS.textSecondary} />
-            </View>
-            <View style={st.infoMid}>
-              <Text style={st.infoLabel}>OPPONENT</Text>
-              <Text style={st.infoName}>{gameState.players[1].name}</Text>
-              <View style={st.infoMeta}>
-                <Text style={st.infoMetaLabel}>RANK</Text>
-                <Text style={st.infoMetaValue}>#1,204</Text>
-              </View>
-            </View>
-            <View style={st.wallsCol}>
-              <Text style={st.wallsLabel}>WALLS</Text>
-              <WallIcon remaining={gameState.players[1].wallsRemaining} />
-            </View>
-          </View>
-        </View>
-
         {/* Log Sequence */}
         <View style={st.logSection}>
           <Text style={st.sectionTitle}>LOG _ SEQUENCE</Text>
@@ -265,34 +342,6 @@ export default function GameScreen() {
           <Text style={st.exportText}>EXPORT GAME DATA</Text>
         </TouchableOpacity>
 
-        {/* Player Info */}
-        <View style={[st.infoCard, st.playerCard]}>
-          <View style={st.playerPinstripe} />
-          <View style={st.infoRow}>
-            <View style={st.avatarPlayer}>
-              <Ionicons name="person" size={24} color={COLORS.textPrimary} />
-            </View>
-            <View style={st.infoMid}>
-              <Text style={[st.infoLabel, { color: COLORS.accent }]}>YOU {cp === 0 ? '(ACTIVE)' : ''}</Text>
-              <Text style={st.infoName}>{gameState.players[0].name}</Text>
-              <View style={st.infoMetaRow}>
-                <View>
-                  <Text style={st.infoMetaLabel}>TIME REMAINING</Text>
-                  <Text style={st.infoMetaValue}>04:12</Text>
-                </View>
-                <View>
-                  <Text style={st.infoMetaLabel}>W/L RATIO</Text>
-                  <Text style={st.infoMetaValue}>1.84</Text>
-                </View>
-              </View>
-            </View>
-            <View style={st.wallsCol}>
-              <Text style={st.wallsLabel}>WALLS</Text>
-              <WallIcon remaining={gameState.players[0].wallsRemaining} />
-            </View>
-          </View>
-        </View>
-
         {/* Tactical Comms */}
         <View style={st.logSection}>
           <Text style={st.sectionTitle}>TACTICAL COMMS</Text>
@@ -309,26 +358,14 @@ export default function GameScreen() {
           </View>
         </View>
 
-        {/* Board Skin Card */}
-        <View style={st.skinCard}>
-          <View style={st.skinBadge}>
-            <Text style={st.skinBadgeText}>NEW SERIES</Text>
-          </View>
-          <View style={st.skinContent}>
-            <Text style={st.skinTitle}>{'NEON OBSIDIAN\nBOARD SKIN'}</Text>
-          </View>
-          <View style={st.skinOverlay}>
-            {Array.from({ length: 9 }).map((_, i) => (
-              <View key={i} style={st.skinLine} />
-            ))}
-          </View>
-        </View>
-
         <View style={{ height: 24 }} />
       </ScrollView>
 
       {/* Turn Toast */}
       <TurnToast playerName={turnToastPlayer} visible={turnToastVisible} onDismiss={() => setTurnToastVisible(false)} />
+
+      {/* Achievement Toast Queue */}
+      <AchievementToast queue={achievementQueue} onComplete={() => setAchievementQueue([])} />
 
       {/* Pause overlay */}
       {showMenu && (
@@ -352,13 +389,15 @@ export default function GameScreen() {
                 <Text style={st.restartText}>RESTART</Text>
               </TouchableOpacity>
               <TouchableOpacity style={st.saveQuitBtn} onPress={() => {
-                saveGame(gameState, mode, difficulty);
+                if (user) storeSaveGame(user.id, gameState as any, mode, difficulty);
+                else ctxSaveGame(gameState, mode, difficulty);
                 router.replace('/(tabs)' as never);
               }} activeOpacity={0.7}>
                 <Text style={st.saveQuitText}>SAVE & QUIT</Text>
               </TouchableOpacity>
               <TouchableOpacity testID="resign-btn" style={st.resignBtn} onPress={() => {
-                clearSavedGame();
+                if (user) deleteSavedGame(user.id);
+                else clearSavedGame();
                 if (mode === 'ai') recordLoss(10 - gameState.players[0].wallsRemaining);
                 incrementAdCounter();
                 router.replace('/(tabs)' as never);
@@ -396,7 +435,7 @@ const st = StyleSheet.create({
   confirmBtn: { backgroundColor: COLORS.accent, borderRadius: 12, paddingVertical: 16, alignItems: 'center', marginTop: 10 },
   confirmDisabled: { opacity: 0.5 },
   confirmText: { color: COLORS.background, fontSize: 14, fontFamily: 'Inter_800ExtraBold', fontWeight: '800', letterSpacing: 1 },
-  infoCard: { backgroundColor: COLORS.elevated, borderRadius: 14, padding: 16, marginTop: 16 },
+  infoCard: { backgroundColor: COLORS.elevated, borderRadius: 14, padding: 16, marginTop: 12 },
   playerCard: { position: 'relative', overflow: 'hidden' },
   playerPinstripe: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 2.5, backgroundColor: COLORS.accent },
   infoRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
@@ -425,13 +464,6 @@ const st = StyleSheet.create({
   chatInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
   chatInput: { flex: 1, backgroundColor: COLORS.elevated, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, color: COLORS.textPrimary, fontSize: 13, fontFamily: 'Inter_400Regular' },
   sendBtn: { width: 40, height: 40, borderRadius: 10, backgroundColor: COLORS.elevated, alignItems: 'center', justifyContent: 'center' },
-  skinCard: { backgroundColor: '#0A0A0A', borderRadius: 14, padding: 20, marginTop: 20, overflow: 'hidden', position: 'relative', minHeight: 120 },
-  skinBadge: { backgroundColor: COLORS.accent, alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, zIndex: 2 },
-  skinBadgeText: { color: COLORS.background, fontSize: 9, fontFamily: 'Inter_800ExtraBold', fontWeight: '800', letterSpacing: 1 },
-  skinContent: { marginTop: 12, zIndex: 2 },
-  skinTitle: { color: COLORS.textPrimary, fontSize: 22, fontFamily: 'Inter_800ExtraBold', fontWeight: '800', lineHeight: 28 },
-  skinOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0, width: '50%', flexDirection: 'row', gap: 8, opacity: 0.1, paddingTop: 10, paddingRight: 10 },
-  skinLine: { width: 2, flex: 1, backgroundColor: COLORS.accent },
   overlay: { backgroundColor: COLORS.overlayGlass, alignItems: 'center', justifyContent: 'center', zIndex: 100 },
   menuCard: { backgroundColor: COLORS.elevated, borderRadius: 20, padding: 32, width: 280, alignItems: 'center' },
   menuTitle: { color: COLORS.textPrimary, fontSize: 18, fontFamily: 'Inter_800ExtraBold', fontWeight: '800', letterSpacing: 2, marginBottom: 24 },
@@ -447,4 +479,3 @@ const st = StyleSheet.create({
   toast: { position: 'absolute', bottom: 100, alignSelf: 'center', backgroundColor: COLORS.elevated, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, zIndex: 200 },
   toastText: { color: COLORS.error, fontSize: 13, fontFamily: 'Inter_600SemiBold', fontWeight: '600' },
 });
-

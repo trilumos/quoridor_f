@@ -5,21 +5,53 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '../../src/theme/colors';
 import { useGameContext } from '../../src/storage/GameContext';
+import { useAuthStore } from '../../src/store/authStore';
+import { useStatsStore } from '../../src/store/statsStore';
+import { useGameStore } from '../../src/store/gameStore';
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { stats, savedGame, clearSavedGame, shouldShowAd, loaded } = useGameContext();
+  const { stats: ctxStats, savedGame: ctxSaved, clearSavedGame, shouldShowAd, loaded } = useGameContext();
+  const { user, profile } = useAuthStore();
+  const { stats: supaStats } = useStatsStore();
+  const { savedGame: storeSaved, deleteSavedGame } = useGameStore();
   const [showResume, setShowResume] = useState(false);
+
+  const rating = supaStats?.rating ?? ctxStats.rating;
+  const totalWins = supaStats?.total_wins ?? ctxStats.totalWins;
+  const totalLosses = supaStats?.total_losses ?? ctxStats.totalLosses;
+  const totalGames = supaStats?.total_games ?? ctxStats.totalGames;
+  const currentStreak = supaStats?.current_streak ?? ctxStats.currentStreak;
+  const bestStreak = supaStats?.best_streak ?? ctxStats.bestStreak;
+  const winRate = totalGames > 0 ? Math.round((totalWins / totalGames) * 100) : 0;
+
+  const hasSavedGame = !!(storeSaved || ctxSaved);
 
   useFocusEffect(
     useCallback(() => {
-      if (loaded && savedGame) {
+      if (user && supaStats) {
+        // data already fetched by _layout StoreInitializer
+      }
+      if (hasSavedGame) {
         setShowResume(true);
       }
-    }, [loaded, savedGame])
+    }, [loaded, hasSavedGame, user])
   );
 
-  const winRate = stats.totalGames > 0 ? Math.round((stats.totalWins / stats.totalGames) * 100) : 0;
+  const handleContinue = () => {
+    setShowResume(false);
+    if (storeSaved) {
+      router.push({ pathname: '/game', params: { mode: storeSaved.mode, difficulty: storeSaved.difficulty || '', resume: 'true' } } as never);
+    } else if (ctxSaved) {
+      router.push({ pathname: '/game', params: { mode: ctxSaved.mode, difficulty: ctxSaved.difficulty || '', resume: 'true' } } as never);
+    }
+  };
+
+  const handleNewGame = () => {
+    if (user && storeSaved) deleteSavedGame(user.id);
+    else clearSavedGame();
+    setShowResume(false);
+  };
 
   return (
     <SafeAreaView style={s.container}>
@@ -40,12 +72,7 @@ export default function HomeScreen() {
         <View style={s.heroSection}>
           <Text style={s.heroLabel}>GRANDMASTER JOURNEY</Text>
           <Text style={s.heroTitle}>{'COMMAND THE\nBOARD.'}</Text>
-          <TouchableOpacity
-            testID="start-game-btn"
-            style={s.startBtn}
-            activeOpacity={0.85}
-            onPress={() => router.push('/mode-select' as never)}
-          >
+          <TouchableOpacity testID="start-game-btn" style={s.startBtn} activeOpacity={0.85} onPress={() => router.push('/mode-select' as never)}>
             <Text style={s.startBtnText}>START GAME</Text>
             <Ionicons name="play" size={18} color={COLORS.background} />
           </TouchableOpacity>
@@ -57,30 +84,29 @@ export default function HomeScreen() {
             <Ionicons name="flame-outline" size={20} color={COLORS.accent} />
           </View>
           <View style={s.streakValue}>
-            <Text style={s.bigNum}>{stats.currentStreak}</Text>
+            <Text style={s.bigNum}>{currentStreak}</Text>
             <Text style={s.bigNumUnit}> Wins</Text>
           </View>
           <View style={s.progressTrack}>
-            <View style={[s.progressFill, { width: `${Math.min(stats.currentStreak * 20, 100)}%` }]} />
+            <View style={[s.progressFill, { width: `${Math.min(currentStreak * 20, 100)}%` }]} />
           </View>
-          <Text style={s.mutedText}>{stats.currentStreak > 0 ? `Best streak: ${stats.bestStreak}` : 'Win games to build your streak.'}</Text>
+          <Text style={s.mutedText}>{currentStreak > 0 ? `Best streak: ${bestStreak}` : 'Win games to build your streak.'}</Text>
         </View>
 
         <View style={s.statsGrid}>
           <View style={s.statCell}>
             <Text style={s.statLabel}>RATING</Text>
             <View style={s.statRow}>
-              <Text style={s.statValue}>{stats.rating}</Text>
-              {stats.totalWins > 0 && <Text style={s.statDelta}>+12</Text>}
+              <Text style={s.statValue}>{rating}</Text>
             </View>
           </View>
           <View style={s.statCell}>
             <Text style={s.statLabel}>WINS</Text>
-            <Text style={s.statValue}>{stats.totalWins}</Text>
+            <Text style={s.statValue}>{totalWins}</Text>
           </View>
           <View style={s.statCell}>
             <Text style={s.statLabel}>LOSSES</Text>
-            <Text style={s.statValue}>{stats.totalLosses}</Text>
+            <Text style={s.statValue}>{totalLosses}</Text>
           </View>
           <View style={s.statCell}>
             <Text style={s.statLabel}>WIN RATE</Text>
@@ -127,22 +153,16 @@ export default function HomeScreen() {
         <View style={{ height: 24 }} />
       </ScrollView>
 
-      {/* Resume Game Modal */}
       {showResume && (
         <TouchableOpacity style={[StyleSheet.absoluteFill, s.overlay]} activeOpacity={1} onPress={() => setShowResume(false)}>
           <View style={s.resumeCard}>
             <Text style={s.resumeTitle}>GAME IN PROGRESS</Text>
             <Text style={s.resumeDesc}>You have an unfinished game. Would you like to continue?</Text>
             <View style={s.resumeBtns}>
-              <TouchableOpacity style={s.resumeContinueBtn} onPress={() => {
-                setShowResume(false);
-                if (savedGame) {
-                  router.push({ pathname: '/game', params: { mode: savedGame.mode, difficulty: savedGame.difficulty || '', resume: 'true' } } as never);
-                }
-              }} activeOpacity={0.85}>
+              <TouchableOpacity style={s.resumeContinueBtn} onPress={handleContinue} activeOpacity={0.85}>
                 <Text style={s.resumeContinueText}>CONTINUE</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={s.resumeNewBtn} onPress={() => { clearSavedGame(); setShowResume(false); }} activeOpacity={0.7}>
+              <TouchableOpacity style={s.resumeNewBtn} onPress={handleNewGame} activeOpacity={0.7}>
                 <Text style={s.resumeNewText}>NEW GAME</Text>
               </TouchableOpacity>
             </View>
